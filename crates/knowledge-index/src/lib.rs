@@ -14,6 +14,8 @@
 //! * [store] - persistent index layout and metadata.
 //! * [pipeline] - the end-to-end index command used by CLI and tests.
 //! * [eval] - retrieval evaluation over a committed query set.
+//! * [telemetry] - the shared layered tracing initializer both binaries
+//!   log through (stderr, filter precedence, JSON mode, OTLP seam).
 
 pub mod cargo;
 pub mod config;
@@ -25,6 +27,7 @@ pub mod pipeline;
 pub mod rustdoc;
 pub mod store;
 pub mod tantivy_index;
+pub mod telemetry;
 
 pub use cargo::CargoUniverse;
 pub use corpus::{CorpusOptions, CorpusReport, RustdocScope, build_corpus};

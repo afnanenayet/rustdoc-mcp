@@ -19,6 +19,7 @@ tantivy = { workspace = true }
 thiserror = { workspace = true }
 toml = "0.9"
 tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
 
 [dev-dependencies]
 home = "0.5.12"
