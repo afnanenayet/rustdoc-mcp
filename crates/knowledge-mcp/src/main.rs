@@ -19,6 +19,7 @@ use std::process::ExitCode;
 use facet::Facet;
 use figue::{self as args, FigueBuiltins};
 use knowledge_index::config::{WorkspaceConfig, parse_std_args};
+use knowledge_index::telemetry::TelemetryOptions;
 use knowledge_mcp::KnowledgeServer;
 use rmcp::service::serve_server;
 use rmcp::transport::stdio;
@@ -43,35 +44,12 @@ struct McpArgs {
 }
 
 fn main() -> ExitCode {
-    // Parse first: the log filter itself comes from figue's config layer
-    // (--log > $RUST_KNOWLEDGE_LOG > $RUST_LOG > default), and parse
-    // diagnostics go to stderr, so stdout only ever carries protocol
-    // traffic. Logging inits right after the parse; nothing is logged
-    // before that, and tracing macros without a subscriber are no-ops.
-    // DriverOutcome::unwrap is figue's native outcome handling: help,
-    // version, completions and schemas print to stdout and exit 0;
-    // diagnostics print to stderr and exit 1 (git-like-multitool recipe).
     let cli =
         parse_std_args::<McpArgs>("knowledge-mcp", env!("CARGO_PKG_VERSION"), DESCRIPTION).unwrap();
-
-    // EnvFilter::new silently ignores invalid directives (and degrades to
-    // ERROR-only logging), so validate the layered filter where it
-    // becomes an EnvFilter instead of failing quietly later.
-    let filter = cli.config.log_filter(false);
-    let env_filter = match tracing_subscriber::EnvFilter::try_new(&filter) {
-        Ok(env_filter) => env_filter,
-        Err(error) => {
-            eprintln!("error: invalid log filter {filter:?}: {error}");
-            return ExitCode::FAILURE;
-        }
-    };
-
-    tracing_subscriber::fmt()
-        .with_env_filter(env_filter)
-        .with_writer(std::io::stderr)
-        .with_target(false)
-        .compact()
-        .init();
+    // MCP speaks JSON-RPC on stdout; the shared layered init writes every
+    // log to stderr, so stdout stays structurally pristine. The filter comes
+    // from RUST_KNOWLEDGE_LOG -> RUST_LOG -> the built-in default.
+    knowledge_index::telemetry::init(&TelemetryOptions::default());
 
     let runtime = match tokio::runtime::Builder::new_current_thread()
         .enable_all()
