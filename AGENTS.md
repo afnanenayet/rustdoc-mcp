@@ -68,14 +68,23 @@ state, or produce unbounded output.
 
 Reproducing and debugging a failure:
 
-- proptest persists failing cases to `proptest-regressions/*.txt` beside the
-  test file's crate. **Commit those files** (never gitignore them): they are
-  replayed automatically on every run until the case passes again.
+- When a property fails, proptest appends the failing case to
+  `<test-file>.proptest-regressions` beside the test file — in this repo,
+  `crates/knowledge-index/tests/properties.proptest-regressions`.
+  (proptest's default lookup walks up from the test file to a directory
+  holding `lib.rs`/`main.rs`; from `tests/` it finds none, so it names
+  the file after the test file itself.) **Commit those files, at that exact
+  path** (never gitignore or move them): plain `cargo test` replays every
+  saved case before generating new random ones, so past failures keep
+  replaying until they pass again.
 - `PROPTEST_CASES=<n> cargo test --test properties` runs a heavier sweep
   (proptest reads this variable natively). The committed default is 32 cases
   per property (16 through the MCP transport) to keep the suite fast.
-- `PROPTEST_SEED=<hex> cargo test --test properties` reproduces one exact
-  random sequence; proptest prints the seed of every failing run.
+- `PROPTEST_RNG_SEED=<u64> cargo test --test properties` pins one exact
+  random sequence (a decimal u64, e.g. `PROPTEST_RNG_SEED=42`) for
+  deterministic debugging. A real failure reproduces through the committed
+  regressions file above; proptest never needs a seed copied out of test
+  output.
 - Re-run a single property with
   `cargo test -p knowledge-index --test properties <name>`.
 
