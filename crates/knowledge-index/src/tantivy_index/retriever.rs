@@ -125,6 +125,29 @@ impl TantivyRetriever {
         parser
     }
 
+    /// Parses text strictly; if the grammar rejects it, re-parses the
+    /// syntax-free words. The lenient parser is deliberately not used:
+    /// it happily returns degenerate leaves (unclosed ranges, half-built
+    /// sets) alongside its error list, and executing those can trip
+    /// scorer invariants inside tantivy. If even the plain words fail to
+    /// parse (lone boolean keywords), the empty BooleanQuery matches
+    /// nothing — a structured dead end, never a panic.
+    fn parsed_query(&self, fields: &[Field], text: &str) -> Box<dyn tantivy::query::Query> {
+        let parser = self.query_parser(fields);
+        match parser.parse_query(text) {
+            Ok(parsed) => parsed,
+            Err(_) => {
+                let words = syntax_free_text(text);
+                match parser.parse_query(&words) {
+                    Ok(parsed) => parsed,
+                    Err(_) => Box::new(BooleanQuery::from(Vec::<
+                        (Occur, Box<dyn tantivy::query::Query>),
+                    >::new())),
+                }
+            }
+        }
+    }
+
     /// Identifier-shaped tokens become high-boost exact term queries.
     fn identifier_clauses(&self, text: &str) -> Vec<(Occur, Box<dyn tantivy::query::Query>)> {
         let mut clauses: Vec<(Occur, Box<dyn tantivy::query::Query>)> = Vec::new();
@@ -286,7 +309,8 @@ impl TantivyRetriever {
         if text.is_empty() {
             return self.filter_clause(query);
         }
-        let parser = self.query_parser(&[
+        let mut clauses: Vec<(Occur, Box<dyn tantivy::query::Query>)> = Vec::new();
+        clauses.push((Occur::Should, self.parsed_query(&[
             self.fields.symbol_path,
             self.fields.title,
             self.fields.section_text,
@@ -294,19 +318,7 @@ impl TantivyRetriever {
             self.fields.signature,
             self.fields.related_text,
             self.fields.body,
-        ]);
-        let mut clauses: Vec<(Occur, Box<dyn tantivy::query::Query>)> = Vec::new();
-        match parser.parse_query(text) {
-            Ok(parsed) => clauses.push((Occur::Should, parsed)),
-            Err(_e) => {
-                // Lenient fallback: index what parses.
-                let (parsed, errors) = parser.parse_query_lenient(text);
-                if !errors.is_empty() {
-                    tracing::debug!(?errors, "lenient parse produced errors");
-                }
-                clauses.push((Occur::Should, parsed));
-            }
-        }
+        ], text)));
         clauses.extend(self.identifier_clauses(text));
         if let Some(filter) = self.filter_clause(query) {
             clauses.push((Occur::Must, filter));
@@ -322,8 +334,7 @@ impl TantivyRetriever {
         if body_text.trim().is_empty() {
             return self.signature_or_title(doc);
         }
-        let parser = self.query_parser(&[self.fields.body]);
-        let (body_query, _errors) = parser.parse_query_lenient(query);
+        let body_query = self.parsed_query(&[self.fields.body], query);
         let searcher = self.searcher();
         let snippet = match SnippetGenerator::create(&searcher, &body_query, self.fields.body) {
             Ok(mut generator) => {
@@ -653,6 +664,18 @@ fn searchable_text(raw: &str) -> String {
     out
 }
 
+/// Query text reduced to plain words, with every bit of tantivy query
+/// grammar syntax removed (field prefixes, occur/boost markers, ranges,
+/// sets, phrases, regexes). Used to re-parse text the grammar rejected:
+/// executing a broken AST (an unclosed range, a half-built set) can trip
+/// scorer invariants deep inside tantivy, so it is never attempted.
+fn syntax_free_text(raw: &str) -> String {
+    raw.split(|c: char| !(c.is_alphanumeric() || c == '_'))
+        .filter(|word| !word.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 /// Truncates text to at most max chars, breaking on a word boundary.
 pub(crate) fn truncate_at_word(text: &str, max: usize) -> String {
     let trimmed = text.trim();
@@ -688,6 +711,18 @@ mod tests {
     #[test]
     fn short_text_passes_through() {
         assert_eq!(truncate_at_word("short text", 100), "short text");
+    }
+
+    #[test]
+    fn syntax_free_text_strips_all_grammar() {
+        // Range/set/occur/field syntax is reduced to plain words, which
+        // can never build anything but term queries.
+        assert_eq!(syntax_free_text("-G{a["), "G a");
+        assert_eq!(syntax_free_text("title:[a TO z]"), "title a TO z");
+        assert_eq!(syntax_free_text("+must -mustnot ^boost"), "must mustnot boost");
+        assert_eq!(syntax_free_text("Writer::flush"), "Writer flush");
+        assert_eq!(syntax_free_text(r#""a phrase"~2"#), "a phrase 2");
+        assert_eq!(syntax_free_text("*"), "");
     }
 
     #[test]
