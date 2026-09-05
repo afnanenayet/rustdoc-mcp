@@ -134,7 +134,7 @@ impl TantivyRetriever {
     /// nothing — a structured dead end, never a panic.
     fn parsed_query(&self, fields: &[Field], text: &str) -> Box<dyn tantivy::query::Query> {
         let parser = self.query_parser(fields);
-        match parser.parse_query(text) {
+        match parser.parse_query(&grammar_escaped(text)) {
             Ok(parsed) => parsed,
             Err(_) => {
                 let words = syntax_free_text(text);
@@ -676,6 +676,18 @@ fn syntax_free_text(raw: &str) -> String {
         .join(" ")
 }
 
+/// Escapes the one character whose unescaped presence can make
+/// tantivy's grammar panic while building the AST: a bare asterisk is
+/// parsed as an "exists" query, which asserts when no field precedes it
+/// (and the grammar can see one mid-token, e.g. "*[A"). Escaped, the
+/// asterisk becomes a literal term character that tokenization splits
+/// on exactly as it does today, so wildcard syntax — deliberately not
+/// part of the retriever contract — is the only behavior lost.
+/// Backslashes are escaped first so user input cannot pre-escape ours.
+fn grammar_escaped(text: &str) -> String {
+    text.replace('\\', "\\\\").replace('*', "\\*")
+}
+
 /// Truncates text to at most max chars, breaking on a word boundary.
 pub(crate) fn truncate_at_word(text: &str, max: usize) -> String {
     let trimmed = text.trim();
@@ -711,6 +723,20 @@ mod tests {
     #[test]
     fn short_text_passes_through() {
         assert_eq!(truncate_at_word("short text", 100), "short text");
+    }
+
+    #[test]
+    fn grammar_escaped_neutralizes_exists_markers() {
+        // A bare asterisk anywhere would make the grammar build an
+        // "exists" query, which panics without a field; escaped it is a
+        // literal term character.
+        assert_eq!(grammar_escaped("*[A"), "\\*[A");
+        assert_eq!(grammar_escaped("a*b"), "a\\*b");
+        assert_eq!(grammar_escaped("*"), "\\*");
+        // User backslashes are escaped first, so they cannot un-escape ours:
+        // a\*b becomes a literal backslash plus a literal asterisk.
+        assert_eq!(grammar_escaped("a\\*b"), "a\\\\\\*b");
+        assert_eq!(grammar_escaped("plain text"), "plain text");
     }
 
     #[test]
