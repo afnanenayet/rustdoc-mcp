@@ -124,11 +124,13 @@ fn search_survives_every_payload() {
                         "{name}: hit id does not round-trip through from_raw"
                     );
                     // Same unit as the property suite: the snippet cap
-                    // counts characters, not bytes.
+                    // is enforced on bytes (tantivy applies it to token
+                    // byte offsets; the truncate_at_word fallback
+                    // truncates bytes too).
                     assert!(
-                        hit.snippet.chars().count() <= 320,
-                        "{name}: snippet is {} chars",
-                        hit.snippet.chars().count()
+                        hit.snippet.len() <= 320,
+                        "{name}: snippet is {} bytes",
+                        hit.snippet.len()
                     );
                 }
             }
@@ -339,7 +341,7 @@ fn chunker_survives_every_payload() {
         for doc in &docs {
             assert!(
                 doc.text.len() <= MAX_CHUNK_CHARS + CHUNK_SLACK,
-                "{name}: chunk is {} chars, exceeding MAX_CHUNK_CHARS ({MAX_CHUNK_CHARS}) + {CHUNK_SLACK}",
+                "{name}: chunk is {} bytes, exceeding MAX_CHUNK_CHARS ({MAX_CHUNK_CHARS}) + {CHUNK_SLACK}",
                 doc.text.len()
             );
             assert!(

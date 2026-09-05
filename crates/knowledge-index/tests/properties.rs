@@ -148,12 +148,17 @@ proptest! {
                         Some(hit.id.clone()),
                         "hit id does not round-trip through from_raw"
                     );
-                    // The snippet cap is in characters (SNIPPET_CHARS =
-                    // 300; tantivy counts characters, not bytes), so count
-                    // characters here too: a multibyte snippet can exceed
-                    // 320 bytes while staying within 320 characters.
+                    // The snippet cap is enforced on bytes: tantivy 0.26.1
+                    // applies set_max_num_chars to token byte offsets
+                    // (tantivy-tokenizer-api's Token offsets are byte
+                    // indices; the "characters" wording in tantivy's
+                    // snippet doc comment is stale — a 2-byte Cyrillic
+                    // corpus at SNIPPET_CHARS = 300 yields a 300-byte,
+                    // 227-char snippet), and the truncate_at_word fallback
+                    // truncates bytes too. 320 = the 300-byte cap plus
+                    // token-boundary overshoot.
                     prop_assert!(
-                        hit.snippet.chars().count() <= 320,
+                        hit.snippet.len() <= 320,
                         "snippet is unbounded"
                     );
                 }
