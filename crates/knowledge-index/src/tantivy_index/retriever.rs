@@ -98,6 +98,17 @@ impl TantivyRetriever {
         self.reader.searcher()
     }
 
+    /// Clamps a caller-supplied limit for [TopDocs::with_limit].
+    ///
+    /// * `0` is treated as `1` (a positive limit is required);
+    /// * oversized values are capped at the number of live documents:
+    ///   tantivy's top collector overflows on `usize::MAX`-scale limits, and
+    ///   a limit above the corpus size returns the same hits anyway.
+    fn clamped_limit(&self, requested: usize) -> usize {
+        let num_docs = self.searcher().num_docs().max(1);
+        requested.max(1).min(num_docs as usize)
+    }
+
     fn query_parser(&self, fields: &[Field]) -> QueryParser {
         let mut parser = QueryParser::for_index(&self.index, fields.to_vec());
         for (field, boost) in [
@@ -188,6 +199,14 @@ impl TantivyRetriever {
             let mut package_clauses: Vec<(Occur, Box<dyn tantivy::query::Query>)> = Vec::new();
             for package in &query.packages {
                 let spec = package.trim().to_lowercase();
+                if spec.is_empty() {
+                    // An empty spec is garbage, not a wildcard. Skipping it
+                    // must never lift the filter: if every spec is empty the
+                    // clause list stays empty and the BooleanQuery below
+                    // matches nothing (tantivy maps an empty BooleanQuery to
+                    // an EmptyScorer).
+                    continue;
+                }
                 if let Some((name, version)) = spec.split_once('@') {
                     package_clauses.push((
                         Occur::Should,
@@ -229,10 +248,17 @@ impl TantivyRetriever {
         if !query.item_kinds.is_empty() {
             let mut kind_clauses: Vec<(Occur, Box<dyn tantivy::query::Query>)> = Vec::new();
             for kind in &query.item_kinds {
+                // Same normalization as package specs: trim + lowercase, and
+                // an empty spec is garbage that must select nothing rather
+                // than widen the filter to every kindless document.
+                let spec = kind.trim().to_lowercase();
+                if spec.is_empty() {
+                    continue;
+                }
                 kind_clauses.push((
                     Occur::Should,
                     Box::new(TermQuery::new(
-                        Term::from_field_text(self.fields.item_kind, &kind.to_lowercase()),
+                        Term::from_field_text(self.fields.item_kind, &spec),
                         IndexRecordOption::Basic,
                     )),
                 ));
@@ -249,8 +275,15 @@ impl TantivyRetriever {
         }
     }
 
-    fn build_search_query(&self, query: &SearchQuery) -> Option<Box<dyn tantivy::query::Query>> {
-        if query.text.trim().is_empty() {
+    /// Builds the tantivy query. The text argument is the caller's query
+    /// after [searchable_text] sanitization (punctuation-only tokens are
+    /// dropped, so hostile syntax never reaches the grammar).
+    fn build_search_query(
+        &self,
+        text: &str,
+        query: &SearchQuery,
+    ) -> Option<Box<dyn tantivy::query::Query>> {
+        if text.is_empty() {
             return self.filter_clause(query);
         }
         let parser = self.query_parser(&[
@@ -263,18 +296,18 @@ impl TantivyRetriever {
             self.fields.body,
         ]);
         let mut clauses: Vec<(Occur, Box<dyn tantivy::query::Query>)> = Vec::new();
-        match parser.parse_query(query.text.trim()) {
+        match parser.parse_query(text) {
             Ok(parsed) => clauses.push((Occur::Should, parsed)),
             Err(_e) => {
                 // Lenient fallback: index what parses.
-                let (parsed, errors) = parser.parse_query_lenient(query.text.trim());
+                let (parsed, errors) = parser.parse_query_lenient(text);
                 if !errors.is_empty() {
                     tracing::debug!(?errors, "lenient parse produced errors");
                 }
                 clauses.push((Occur::Should, parsed));
             }
         }
-        clauses.extend(self.identifier_clauses(query.text.trim()));
+        clauses.extend(self.identifier_clauses(text));
         if let Some(filter) = self.filter_clause(query) {
             clauses.push((Occur::Must, filter));
         }
@@ -383,9 +416,10 @@ impl KnowledgeRetriever for TantivyRetriever {
         let _enter = span.enter();
         let start = std::time::Instant::now();
 
-        let limit = query.limit.max(1);
+        let limit = self.clamped_limit(query.limit);
+        let text = searchable_text(&query.text);
         let tantivy_query = self
-            .build_search_query(query)
+            .build_search_query(&text, query)
             .ok_or_else(|| KnowledgeError::Engine("empty query".into()))?;
         let searcher = self.searcher();
         let top = searcher
@@ -396,7 +430,7 @@ impl KnowledgeRetriever for TantivyRetriever {
         for (score, addr) in top {
             let doc: TantivyDocument = searcher.doc(addr).map_err(KnowledgeError::engine)?;
             if let Some(mut hit) = self.hit_from_doc(score, &doc) {
-                hit.snippet = self.snippet_for(&query.text, &doc);
+                hit.snippet = self.snippet_for(&text, &doc);
                 hits.push(hit);
             }
         }
@@ -519,7 +553,7 @@ impl KnowledgeRetriever for TantivyRetriever {
         let top = searcher
             .search(
                 &boolean,
-                &TopDocs::with_limit(query.limit.max(1)).order_by_score(),
+                &TopDocs::with_limit(self.clamped_limit(query.limit)).order_by_score(),
             )
             .map_err(KnowledgeError::engine)?;
 
@@ -597,6 +631,28 @@ impl KnowledgeRetriever for TantivyRetriever {
     }
 }
 
+/// Query text with punctuation-only tokens removed.
+///
+/// A token containing no alphanumeric characters (a bare asterisk, a lone
+/// quote, a run of colons) can never match an indexed term, and tantivy's
+/// query grammar panics on an unprefixed asterisk: it parses as an "exists"
+/// query without a field, and UserInputLeaf::set_field asserts the field is
+/// present. LLM clients send such tokens freely, so they are dropped before
+/// the text reaches the parser; for every real query this changes nothing.
+fn searchable_text(raw: &str) -> String {
+    let mut out = String::with_capacity(raw.len());
+    for token in raw.split_whitespace() {
+        if !token.chars().any(char::is_alphanumeric) {
+            continue;
+        }
+        if !out.is_empty() {
+            out.push(' ');
+        }
+        out.push_str(token);
+    }
+    out
+}
+
 /// Truncates text to at most max chars, breaking on a word boundary.
 pub(crate) fn truncate_at_word(text: &str, max: usize) -> String {
     let trimmed = text.trim();
@@ -632,6 +688,25 @@ mod tests {
     #[test]
     fn short_text_passes_through() {
         assert_eq!(truncate_at_word("short text", 100), "short text");
+    }
+
+    #[test]
+    fn searchable_text_drops_punctuation_only_tokens() {
+        // The shapes that panic tantivy's grammar (an "exists" query
+        // without a field) must be gone before parsing.
+        assert_eq!(searchable_text("* * ** *** *?*"), "");
+        assert_eq!(searchable_text("*"), "");
+        // Field-scoped syntax and real tokens survive untouched.
+        assert_eq!(searchable_text("a:* b"), "a:* b");
+        assert_eq!(searchable_text("write_all *"), "write_all");
+        assert_eq!(
+            searchable_text("  how * should ::  this  "),
+            "how should this"
+        );
+        // Quoted phrases keep their quotes: the token has word characters.
+        assert_eq!(searchable_text("\"writer\" *"), "\"writer\"");
+        // Unicode word text is kept; unicode punctuation is not.
+        assert_eq!(searchable_text("\u{4e2d}\u{6587} *"), "\u{4e2d}\u{6587}");
     }
 
     #[test]

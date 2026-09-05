@@ -186,13 +186,12 @@ pub fn to_tantivy_doc(fields: &IndexFields, doc: &KnowledgeDocument) -> TantivyD
         format!("{}@{}", doc.package.name, doc.package.version).to_lowercase(),
     );
     td.add_text(fields.source_kind, doc.source_kind.as_str());
-    td.add_text(
-        fields.item_kind,
-        doc.item_kind
-            .clone()
-            .map(|k| k.to_lowercase())
-            .unwrap_or_default(),
-    );
+    if let Some(kind) = doc.item_kind.as_deref().filter(|k| !k.is_empty()) {
+        // Absence is not a value: an empty item kind must not become a
+        // queryable term, or an item_kinds: [""] filter would select every
+        // kindless document — a filter bypass.
+        td.add_text(fields.item_kind, kind.to_lowercase());
+    }
     td.add_text(fields.title, doc.title.as_str());
     td.add_text(
         fields.symbol_path,
