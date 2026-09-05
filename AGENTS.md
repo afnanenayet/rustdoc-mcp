@@ -44,6 +44,41 @@ cargo run -p knowledge-cli -- eval evals/queries.toml              # retrieval e
   `RUST_LOG`) env vars are figue's environment layer: each sits below its
   CLI flag, which always wins.
 
+## Property-based and adversarial-input testing
+
+`cargo test` runs two hostile-input suites alongside the example-based tests
+(issue #5). The MCP surface accepts arbitrary strings from LLM clients; these
+suites enforce that no such string can panic the server, hang it, corrupt
+state, or produce unbounded output.
+
+- **Adversarial corpora** — `crates/knowledge-index/tests/adversarial.rs` and
+  `crates/knowledge-mcp/tests/adversarial.rs`: a committed, named list of
+  hostile payloads (NUL bytes, control characters, unicode lookalikes, path
+  traversal, query-syntax metacharacters, markdown fence bombs, ~1MB
+  strings) run through every entry point an LLM client can reach —
+  deterministically, no randomness, every run. **To add a payload**, append a
+  `("name", string)` entry to `payloads()`; every test picks it up
+  automatically.
+- **Property suites** — `crates/knowledge-index/tests/properties.rs` and
+  `crates/knowledge-mcp/tests/properties.rs`: proptest properties over
+  arbitrary query text, symbols, ids, package/kind filters (including the
+  no-filter-bypass invariant), limits, and markdown chunking. They prove
+  invariants, **not retrieval quality** — `evals/queries.toml` stays the
+  relevance gate; green property tests are not evidence of good ranking.
+
+Reproducing and debugging a failure:
+
+- proptest persists failing cases to `proptest-regressions/*.txt` beside the
+  test file's crate. **Commit those files** (never gitignore them): they are
+  replayed automatically on every run until the case passes again.
+- `PROPTEST_CASES=<n> cargo test --test properties` runs a heavier sweep
+  (proptest reads this variable natively). The committed default is 32 cases
+  per property (16 through the MCP transport) to keep the suite fast.
+- `PROPTEST_SEED=<hex> cargo test --test properties` reproduces one exact
+  random sequence; proptest prints the seed of every failing run.
+- Re-run a single property with
+  `cargo test -p knowledge-index --test properties <name>`.
+
 ## Architecture
 
 Four crates, one data flow. `knowledge-core` is the only crate the others all
