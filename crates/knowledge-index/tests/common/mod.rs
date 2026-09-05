@@ -27,6 +27,8 @@ struct Fixture {
     retriever: TantivyRetriever,
     /// Distinct `name` and `name@version` keys that occur in the corpus.
     package_keys: Vec<String>,
+    /// Distinct item kinds that occur in the corpus (lowercase).
+    item_kinds: Vec<String>,
     /// Id of a document that is known to exist in the index.
     sample_id: DocumentId,
 }
@@ -67,14 +69,21 @@ fn build_fixture() -> Fixture {
     let retriever = TantivyRetriever::open(dir.path()).expect("open index");
 
     let mut package_keys: Vec<String> = Vec::new();
+    let mut item_kinds: Vec<String> = Vec::new();
     for doc in &documents {
         for key in [doc.package.name.clone(), doc.package.display()] {
             if !package_keys.contains(&key) {
                 package_keys.push(key);
             }
         }
+        if let Some(kind) = doc.item_kind.as_deref().map(str::to_lowercase)
+            && !item_kinds.contains(&kind)
+        {
+            item_kinds.push(kind);
+        }
     }
     package_keys.sort();
+    item_kinds.sort();
 
     let sample_id = documents
         .iter()
@@ -88,6 +97,7 @@ fn build_fixture() -> Fixture {
         _dir: dir,
         retriever,
         package_keys,
+        item_kinds,
         sample_id,
     }
 }
@@ -100,6 +110,11 @@ pub fn retriever() -> &'static TantivyRetriever {
 /// Distinct `name` and `name@version` package keys present in the corpus.
 pub fn package_keys() -> &'static [String] {
     &FIXTURE.get_or_init(build_fixture).package_keys
+}
+
+/// Distinct item kinds present in the corpus (lowercase, as indexed).
+pub fn item_kinds() -> &'static [String] {
+    &FIXTURE.get_or_init(build_fixture).item_kinds
 }
 
 /// Id of a document that is known to exist in the fixture index.
