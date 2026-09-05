@@ -1193,6 +1193,7 @@ dependencies = [
  "figue",
  "home",
  "knowledge-core",
+ "log",
  "proptest",
  "pulldown-cmark",
  "rustdoc-types",
@@ -1204,6 +1205,7 @@ dependencies = [
  "thiserror",
  "toml",
  "tracing",
+ "tracing-log",
  "tracing-subscriber",
 ]
 

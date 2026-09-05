@@ -14,7 +14,11 @@
 //!   JSON logs — the export-ready encoding;
 //! * malformed directives never abort startup: they degrade to the built-in
 //!   default with a warn;
-//! * a second init in the same process (tests) is tolerated, not a panic.
+//! * a second init in the same process (tests) is tolerated, not a panic;
+//! * `log`-crate records (dependencies that do not use `tracing`) are
+//!   bridged into the same stack, filtered per target like everything
+//!   else — the behavior the ad-hoc `SubscriberInitExt::init()` setups
+//!   this module replaced used to provide.
 //!
 //! The stack is `Registry` → `EnvFilter` → extra layers → formatting layer,
 //! so the init API is layer-agnostic: [init_with] accepts any additional
@@ -269,6 +273,16 @@ where
         .is_ok(),
     };
 
+    // Bridge `log`-crate records into the subscriber — the behavior the
+    // ad-hoc `SubscriberInitExt::init()` setups this module replaced used
+    // to provide, so dependencies without a `tracing` dependency still
+    // reach the stack (EnvFilter keeps them toned down per target). Like
+    // the subscriber itself this is once-only per process: an already-set
+    // logger (an earlier init, e.g. in tests) is tolerated.
+    if tracing_log::LogTracer::init().is_err() {
+        tracing::debug!("log crate bridge already initialized");
+    }
+
     // Warnings can only be emitted through a live subscriber, so they come
     // after the install attempt and reach whichever subscriber is active
     // (including one installed by an earlier test).
@@ -457,6 +471,10 @@ mod tests {
         tracing::info!(hits = 3, elapsed_ms = 12, "search done");
         drop(enter);
 
+        // `log`-crate records (dependencies without `tracing`) are bridged
+        // into the same stack.
+        log::info!("bridged log record");
+
         let buf = writer
             .0
             .lock()
@@ -467,6 +485,7 @@ mod tests {
 
         let mut saw_corpus = false;
         let mut saw_search = false;
+        let mut saw_bridge = false;
         for line in text.lines() {
             let value: serde_json::Value =
                 serde_json::from_str(line).expect("every JSON-mode line is JSON");
@@ -491,6 +510,9 @@ mod tests {
                         .and_then(serde_json::Value::as_u64),
                     Some(42)
                 );
+            }
+            if message == "bridged log record" {
+                saw_bridge = true;
             }
             if message == "search done" {
                 saw_search = true;
@@ -518,6 +540,7 @@ mod tests {
         }
         assert!(saw_corpus, "indexing event missing from JSON output");
         assert!(saw_search, "request event missing from JSON output");
+        assert!(saw_bridge, "log-crate record missing from JSON output");
 
         // A second init in the same process (tests share one) must be
         // tolerated: no panic, the existing subscriber stays in place.
