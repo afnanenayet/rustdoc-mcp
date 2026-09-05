@@ -28,6 +28,8 @@ const CHUNK_SLACK: usize = 3;
 
 /// Fragments an adversarial or confused LLM client might assemble strings
 /// from: query syntax, path traversal, unicode tricks, package specs.
+/// Duplicated verbatim in `crates/knowledge-mcp/tests/properties.rs` (no
+/// shared test-support crate, by scope decision); keep both lists in sync.
 const HOSTILE_FRAGMENTS: [&str; 12] = [
     "*", "\"", "::", "\u{0}", "\u{200b}", " AND ", " NOT ", " OR ", "@", "..", "/", "base64",
 ];
@@ -146,7 +148,14 @@ proptest! {
                         Some(hit.id.clone()),
                         "hit id does not round-trip through from_raw"
                     );
-                    prop_assert!(hit.snippet.len() <= 320, "snippet is unbounded");
+                    // The snippet cap is in characters (SNIPPET_CHARS =
+                    // 300; tantivy counts characters, not bytes), so count
+                    // characters here too: a multibyte snippet can exceed
+                    // 320 bytes while staying within 320 characters.
+                    prop_assert!(
+                        hit.snippet.chars().count() <= 320,
+                        "snippet is unbounded"
+                    );
                 }
             }
             Err(KnowledgeError::Engine(message)) if message == "empty query" => {}

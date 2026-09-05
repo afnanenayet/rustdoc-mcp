@@ -123,10 +123,12 @@ fn search_survives_every_payload() {
                         Some(hit.id.clone()),
                         "{name}: hit id does not round-trip through from_raw"
                     );
+                    // Same unit as the property suite: the snippet cap
+                    // counts characters, not bytes.
                     assert!(
-                        hit.snippet.len() <= 320,
+                        hit.snippet.chars().count() <= 320,
                         "{name}: snippet is {} chars",
-                        hit.snippet.len()
+                        hit.snippet.chars().count()
                     );
                 }
             }

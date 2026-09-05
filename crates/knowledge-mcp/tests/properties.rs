@@ -15,6 +15,8 @@ use serde_json::{Value, json};
 
 /// Fragments an adversarial or confused LLM client might assemble tool
 /// arguments from: query syntax, path traversal, unicode, package specs.
+/// Duplicated verbatim from `crates/knowledge-index/tests/properties.rs`
+/// (no shared test-support crate); keep both lists in sync.
 const HOSTILE_FRAGMENTS: [&str; 12] = [
     "*", "\"", "::", "\u{0}", "\u{200b}", " AND ", " NOT ", " OR ", "@", "..", "/", "base64",
 ];
