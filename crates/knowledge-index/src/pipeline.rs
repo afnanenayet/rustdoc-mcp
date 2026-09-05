@@ -64,6 +64,7 @@ pub fn index_workspace(
     index_dir: Option<&Path>,
     options: &IndexOptions,
 ) -> Result<IndexOutcome, IndexError> {
+    let start = std::time::Instant::now();
     let universe = CargoUniverse::load_with(manifest_path, options.cargo.as_deref())?;
     let index_dir = index_dir.map_or_else(
         || default_index_dir(universe.workspace_root()),
@@ -114,6 +115,7 @@ pub fn index_workspace(
     info!(
         index_dir = %index_dir.display(),
         documents = documents.len(),
+        elapsed_ms = start.elapsed().as_millis() as u64,
         "indexing complete"
     );
 

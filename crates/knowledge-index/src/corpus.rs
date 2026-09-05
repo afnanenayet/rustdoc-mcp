@@ -64,8 +64,13 @@ pub fn build_corpus(
     provider: &dyn RustdocProvider,
     options: &CorpusOptions,
 ) -> Result<(Vec<KnowledgeDocument>, CorpusReport), IndexError> {
-    let span = info_span!("package_ingestion");
+    let span = info_span!(
+        "package_ingestion",
+        packages = universe.package_count(),
+        documents = tracing::field::Empty
+    );
     let _enter = span.enter();
+    let start = std::time::Instant::now();
 
     let mut report = CorpusReport {
         packages: universe.package_count(),
@@ -156,11 +161,15 @@ pub fn build_corpus(
             .then_with(|| a.context().cmp(&b.context()))
     });
 
+    // Record the final count into the span field declared Empty above so
+    // stage telemetry rides along every event inside the span.
+    span.record("documents", documents.len());
     info!(
         packages = report.packages,
         rustdoc_packages = report.rustdoc_packages,
         markdown_files = report.markdown_files,
         documents = documents.len(),
+        elapsed_ms = start.elapsed().as_millis() as u64,
         "built corpus"
     );
 
