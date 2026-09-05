@@ -263,10 +263,23 @@ indexing can be added later without format breakage.
 
 ## Observability, errors, performance
 
-- `tracing` spans: `cargo_metadata`, `rustdoc_generation`,
-  `package_ingestion`, `markdown_ingestion`, `index_build`, `search` +
-  counts (packages discovered, artifacts parsed, docs normalized/skipped,
-  index size, search latency). Doc bodies are never logged.
+- `tracing` spans: indexing stages (`cargo_metadata`, `rustdoc_generation`,
+  `rustdoc_normalize`, `package_ingestion`, `markdown_discovery`,
+  `markdown_ingestion`, `index_build`) and request paths (`search`,
+  `symbol_lookup`, `doc_get`), with counts (packages discovered, artifacts
+  parsed, docs normalized/skipped, index size) and `elapsed_ms` stage/request
+  timings. User query text lives at debug level only; doc bodies are never
+  logged.
+- Both binaries initialize tracing through one shared layered helper
+  (`knowledge_index::telemetry`): `Registry` → `EnvFilter` → formatting
+  layer, always writing to **stderr** (stdout is a data channel — JSON-RPC
+  for the MCP server, `--json` for the CLI). Filter precedence is
+  `RUST_KNOWLEDGE_LOG` → `RUST_LOG` → a built-in default with per-target
+  levels for noisy libraries; `RUST_KNOWLEDGE_LOG_FORMAT=json` selects the
+  export-ready encoding. The init API accepts extra layers, so an
+  OpenTelemetry/OTLP exporter slots in later behind a cargo feature with
+  no redesign. See [observability.md](observability.md) for the env-var
+  reference, the level policy, the span inventory, and the export seam.
 - Typed `thiserror` errors carrying package/version/command/path/format
   version context, e.g. "failed to parse rustdoc JSON for {pkg}: format
   version {got} unsupported by parser {expected} (artifact: {path})".
