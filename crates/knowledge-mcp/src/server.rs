@@ -89,10 +89,18 @@ impl KnowledgeServer {
             item_kinds: params.item_kinds.unwrap_or_default(),
             limit: params.limit.unwrap_or(8).clamp(1, 50),
         };
-        let hits = self
-            .retriever
-            .search(&query)
-            .map_err(|e| McpError::internal_error(format!("search failed: {e}"), None))?;
+        // Engine failures (queries that sanitize to empty, stale or corrupt
+        // indexes) are friendly error results, not protocol errors: an LLM
+        // client sending hostile input must get a readable message, exactly
+        // the way doc_read reports unknown ids.
+        let hits = match self.retriever.search(&query) {
+            Ok(hits) => hits,
+            Err(e) => {
+                return Ok(CallToolResult::error(vec![ContentBlock::text(format!(
+                    "search failed: {e}. The index may be stale; run rust-knowledge index."
+                ))]));
+            }
+        };
 
         let results: Vec<serde_json::Value> = hits
             .iter()
@@ -172,10 +180,14 @@ impl KnowledgeServer {
             packages: params.packages.unwrap_or_default(),
             limit: params.limit.unwrap_or(5).clamp(1, 50),
         };
-        let infos = self
-            .retriever
-            .symbol_lookup(&query)
-            .map_err(|e| McpError::internal_error(format!("symbol lookup failed: {e}"), None))?;
+        let infos = match self.retriever.symbol_lookup(&query) {
+            Ok(infos) => infos,
+            Err(e) => {
+                return Ok(CallToolResult::error(vec![ContentBlock::text(format!(
+                    "symbol lookup failed: {e}. The index may be stale; run rust-knowledge index."
+                ))]));
+            }
+        };
         let results: Vec<serde_json::Value> = infos
             .iter()
             .map(|info| {
