@@ -18,7 +18,7 @@ use knowledge_core::{
     DocumentId, KnowledgeError, KnowledgeRetriever, PackageIdentity, SearchQuery, SourceKind,
     SymbolQuery,
 };
-use knowledge_index::markdown::{MarkdownFile, MAX_CHUNK_CHARS, chunk_markdown};
+use knowledge_index::markdown::{MAX_CHUNK_CHARS, MarkdownFile, chunk_markdown};
 
 /// Structural separators ("\n\n", "\n- ") are appended without a bounds
 /// check, so a chunk may slightly exceed [MAX_CHUNK_CHARS]. This is the
@@ -33,9 +33,15 @@ fn payloads() -> Vec<(&'static str, String)> {
         ("empty", String::new()),
         ("whitespace only", "   \t \n\r\n  ".into()),
         ("nul bytes", "\0n\0u\0l\0".into()),
-        ("control characters", "\u{1}\u{7}\u{8}\u{b}\u{c}\u{e}\u{1f}".into()),
+        (
+            "control characters",
+            "\u{1}\u{7}\u{8}\u{b}\u{c}\u{e}\u{1f}".into(),
+        ),
         ("cyrillic homoglyph", "d\u{0435}mo-cor\u{0435}".into()),
-        ("zero-width characters", "demo\u{200b}\u{200c}\u{200d}-core".into()),
+        (
+            "zero-width characters",
+            "demo\u{200b}\u{200c}\u{200d}-core".into(),
+        ),
         ("combining marks", "write_a\u{301}ll".into()),
         ("right-to-left override", "\u{202e}base64".into()),
         ("fullwidth lookalike", "\u{ff44}emo-core".into()),
@@ -105,7 +111,11 @@ fn search_survives_every_payload() {
         };
         match retriever.search(&query) {
             Ok(hits) => {
-                assert!(hits.len() <= 8, "{name}: {} hits exceeds limit 8", hits.len());
+                assert!(
+                    hits.len() <= 8,
+                    "{name}: {} hits exceeds limit 8",
+                    hits.len()
+                );
                 for hit in &hits {
                     assert_eq!(
                         DocumentId::from_raw(hit.id.as_str()),
@@ -136,7 +146,11 @@ fn symbol_lookup_survives_every_payload() {
         };
         match retriever.symbol_lookup(&query) {
             Ok(infos) => {
-                assert!(infos.len() <= 8, "{name}: {} results exceeds limit 8", infos.len());
+                assert!(
+                    infos.len() <= 8,
+                    "{name}: {} results exceeds limit 8",
+                    infos.len()
+                );
                 for info in &infos {
                     assert!(
                         DocumentId::from_raw(info.id.as_str()).is_some(),
@@ -193,7 +207,9 @@ fn garbage_filters_never_widen_results() {
     for (name, payload) in payloads() {
         let normalized = payload.trim().to_lowercase();
         assert!(
-            !keys.iter().any(|k| k.eq_ignore_ascii_case(normalized.trim())),
+            !keys
+                .iter()
+                .any(|k| k.eq_ignore_ascii_case(normalized.trim())),
             "{name}: payload accidentally names a real package; pick a different payload"
         );
         assert!(
@@ -255,7 +271,10 @@ fn mixed_valid_and_garbage_filters_keep_valid_semantics() {
     );
     for hit in &hits {
         // Only the valid spec may contribute hits.
-        assert_eq!(hit.package_name, "base64", "hit outside the valid filter set");
+        assert_eq!(
+            hit.package_name, "base64",
+            "hit outside the valid filter set"
+        );
     }
 }
 

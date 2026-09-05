@@ -448,7 +448,10 @@ mod tests {
                 doc.text.len()
             );
             assert_eq!(doc.section_path, vec!["Big"]);
-            assert!(doc.text.chars().all(|c| c == '\u{e4}'), "split mid-character");
+            assert!(
+                doc.text.chars().all(|c| c == '\u{e4}'),
+                "split mid-character"
+            );
         }
         // Splitting is deterministic: same input, same ids.
         let again = chunks(&text);

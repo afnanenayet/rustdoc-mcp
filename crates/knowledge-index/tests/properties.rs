@@ -18,7 +18,7 @@ use knowledge_core::{
     DocumentId, KnowledgeError, KnowledgeRetriever, PackageIdentity, SearchQuery, SourceKind,
     SymbolQuery,
 };
-use knowledge_index::markdown::{MarkdownFile, MAX_CHUNK_CHARS, chunk_markdown};
+use knowledge_index::markdown::{MAX_CHUNK_CHARS, MarkdownFile, chunk_markdown};
 use proptest::prelude::*;
 
 /// Structural separators (paragraph ends, list markers) are appended
@@ -29,18 +29,7 @@ const CHUNK_SLACK: usize = 3;
 /// Fragments an adversarial or confused LLM client might assemble strings
 /// from: query syntax, path traversal, unicode tricks, package specs.
 const HOSTILE_FRAGMENTS: [&str; 12] = [
-    "*",
-    "\"",
-    "::",
-    "\u{0}",
-    "\u{200b}",
-    " AND ",
-    " NOT ",
-    " OR ",
-    "@",
-    "..",
-    "/",
-    "base64",
+    "*", "\"", "::", "\u{0}", "\u{200b}", " AND ", " NOT ", " OR ", "@", "..", "/", "base64",
 ];
 
 /// Arbitrary hostile strings: bounded size, good shrinking.
