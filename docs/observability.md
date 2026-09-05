@@ -22,8 +22,9 @@ rust-knowledge -v search "tokio spawn_blocking"
 # JSON logs, the export-ready encoding (one JSON object per line).
 RUST_KNOWLEDGE_LOG_FORMAT=json rust-knowledge search spawn_blocking --json
 
-# Full control via the standard filter syntax.
-RUST_KNOWLEDGE_LOG='info,rust_knowledge=debug' knowledge-mcp
+# Full control via the standard filter syntax. Engine events come from
+# knowledge_index::* targets (the serving line is knowledge_mcp).
+RUST_KNOWLEDGE_LOG='info,knowledge_index=debug' knowledge-mcp
 RUST_LOG=trace RUST_KNOWLEDGE_LOG_FORMAT=json knowledge-mcp
 ```
 
@@ -61,8 +62,9 @@ engine's own stage/request lines visible.
 
 ## Log formats
 
-**human** (default, unchanged from earlier releases): compact, no target
-prefix, one line per event, stderr.
+**human** (default): compact, no target prefix, one line per event —
+format unchanged from earlier releases; the destination moved from
+stdout to stderr in this release, so capture logs with `2>` or `2>&1`.
 
 ```
 2026-09-05T08:59:30.408409Z  INFO search done hits=1 elapsed_ms=1
@@ -168,6 +170,11 @@ let layer = tracing_opentelemetry::layer().with_tracer(tracer);
 // The existing seam, unchanged:
 knowledge_index::telemetry::init_with(&TelemetryOptions::default(), layer)
 ```
+
+The exporter layer stacks above `EnvFilter`, so when the `otlp`
+feature lands, exports are gated by the same filter directives as
+stderr output: they honor `RUST_KNOWLEDGE_LOG`/`RUST_LOG`, and events
+the filter drops are never exported.
 
 The feature owns the exporter lifecycle (flushing the provider on
 shutdown); `init_with` returns an `InitStatus` describing the installed
