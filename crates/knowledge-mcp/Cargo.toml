@@ -27,6 +27,7 @@ tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 
 [dev-dependencies]
+proptest = "1.11.0"
 rmcp = { version = "3.2.0", features = ["client"] }
 tempfile = "3"
 
