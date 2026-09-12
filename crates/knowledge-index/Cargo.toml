@@ -19,10 +19,13 @@ tantivy = { workspace = true }
 thiserror = { workspace = true }
 toml = "0.9"
 tracing = { workspace = true }
+tracing-log = { workspace = true }
+tracing-subscriber = { workspace = true }
 
 [dev-dependencies]
 home = "0.5.12"
 proptest = "1.11.0"
+log = "0.4"
 tempfile = "3"
 criterion = "0.8.2"
 

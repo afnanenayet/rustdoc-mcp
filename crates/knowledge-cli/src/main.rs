@@ -21,6 +21,7 @@ use knowledge_index::CargoUniverse;
 use knowledge_index::config::{WorkspaceConfig, parse_std_args};
 use knowledge_index::corpus::{CorpusOptions, RustdocScope, build_corpus};
 use knowledge_index::rustdoc::{GeneratedRustdocProvider, PrebuiltRustdocProvider};
+use knowledge_index::telemetry::TelemetryOptions;
 
 const PROGRAM: &str = "rust-knowledge";
 const ABOUT: &str = "Search documentation of the resolved Cargo dependency universe of a workspace";
@@ -159,33 +160,13 @@ enum Command {
 }
 
 fn main() -> ExitCode {
-    // DriverOutcome::unwrap is figue's native outcome handling: help,
-    // version, completions and schemas print to stdout and exit 0;
-    // diagnostics print to stderr and exit 1 (git-like-multitool recipe).
     let cli = parse_std_args::<Cli>(PROGRAM, env!("CARGO_PKG_VERSION"), ABOUT).unwrap();
-
-    // EnvFilter::new silently ignores invalid directives (and degrades to
-    // ERROR-only logging), so validate the layered filter where it
-    // becomes an EnvFilter instead of failing quietly later.
-    let filter = cli.config.log_filter(cli.verbose);
-    let env_filter = match tracing_subscriber::EnvFilter::try_new(&filter) {
-        Ok(env_filter) => env_filter,
-        Err(error) => {
-            eprintln!("error: invalid log filter {filter:?}: {error}");
-            return ExitCode::FAILURE;
-        }
-    };
-
-    // Logs go to stderr: stdout carries the commands' own output (one
-    // JSON object per line for --json subcommands), so a WARN/INFO line
-    // there would corrupt scripted consumption (knowledge-mcp does the
-    // same for its protocol channel).
-    tracing_subscriber::fmt()
-        .with_env_filter(env_filter)
-        .with_writer(std::io::stderr)
-        .with_target(false)
-        .compact()
-        .init();
+    // Shared layered tracing init: logs go to stderr (stdout carries the
+    // data output of --json modes); -v bumps the built-in default filter,
+    // RUST_KNOWLEDGE_LOG / RUST_LOG still win over it.
+    knowledge_index::telemetry::init(&TelemetryOptions {
+        verbose: cli.verbose,
+    });
 
     match run(&cli) {
         Ok(()) => ExitCode::SUCCESS,

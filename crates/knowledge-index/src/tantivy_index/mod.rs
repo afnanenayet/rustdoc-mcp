@@ -27,6 +27,7 @@ pub fn build_index(
 ) -> Result<(), IndexError> {
     let span = tracing::info_span!("index_build", documents = documents.len());
     let _enter = span.enter();
+    let start = std::time::Instant::now();
 
     std::fs::create_dir_all(index_dir).map_err(|e| IndexError::io(index_dir, e))?;
     let tantivy_dir = IndexMeta::tantivy_dir(index_dir);
@@ -51,6 +52,11 @@ pub fn build_index(
     crate::store::write_corpus(index_dir, documents)?;
     meta.save(&IndexMeta::meta_path(index_dir))?;
 
-    tracing::info!(index_dir = %index_dir.display(), documents = documents.len(), "index built");
+    tracing::info!(
+        index_dir = %index_dir.display(),
+        documents = documents.len(),
+        elapsed_ms = start.elapsed().as_millis() as u64,
+        "index built"
+    );
     Ok(())
 }

@@ -20,7 +20,7 @@ use tantivy::query::{BooleanQuery, BoostQuery, Occur, QueryParser, TermQuery};
 use tantivy::schema::{Field, IndexRecordOption, Value};
 use tantivy::snippet::SnippetGenerator;
 use tantivy::{Index, TantivyDocument, Term};
-use tracing::{info, info_span};
+use tracing::{debug_span, info};
 
 use crate::error::IndexError;
 use crate::store::IndexMeta;
@@ -108,6 +108,24 @@ impl TantivyRetriever {
         let num_docs = self.searcher().num_docs().max(1);
         requested.max(1).min(num_docs as usize)
     }
+    /// Fetches one document by exact id; the trait method [Self::get]
+    /// wraps this in the request span and timing.
+    fn document_by_id(&self, id: &DocumentId) -> Result<KnowledgeDocument> {
+        let searcher = self.searcher();
+        let query = TermQuery::new(
+            Term::from_field_text(self.fields.id, id.as_str()),
+            IndexRecordOption::Basic,
+        );
+        let top = searcher
+            .search(&query, &TopDocs::with_limit(1).order_by_score())
+            .map_err(KnowledgeError::engine)?;
+        let (_, addr) = top
+            .first()
+            .ok_or_else(|| KnowledgeError::DocumentNotFound(id.clone()))?;
+        let doc: TantivyDocument = searcher.doc(*addr).map_err(KnowledgeError::engine)?;
+        from_tantivy_doc(&self.fields, &doc)
+            .ok_or_else(|| KnowledgeError::DocumentNotFound(id.clone()))
+    }
 
     fn query_parser(&self, fields: &[Field]) -> QueryParser {
         let mut parser = QueryParser::for_index(&self.index, fields.to_vec());
@@ -140,9 +158,10 @@ impl TantivyRetriever {
                 let words = syntax_free_text(text);
                 match parser.parse_query(&words) {
                     Ok(parsed) => parsed,
-                    Err(_) => Box::new(BooleanQuery::from(Vec::<
-                        (Occur, Box<dyn tantivy::query::Query>),
-                    >::new())),
+                    Err(_) => Box::new(BooleanQuery::from(Vec::<(
+                        Occur,
+                        Box<dyn tantivy::query::Query>,
+                    )>::new())),
                 }
             }
         }
@@ -310,15 +329,21 @@ impl TantivyRetriever {
             return self.filter_clause(query);
         }
         let mut clauses: Vec<(Occur, Box<dyn tantivy::query::Query>)> = Vec::new();
-        clauses.push((Occur::Should, self.parsed_query(&[
-            self.fields.symbol_path,
-            self.fields.title,
-            self.fields.section_text,
-            self.fields.package_name,
-            self.fields.signature,
-            self.fields.related_text,
-            self.fields.body,
-        ], text)));
+        clauses.push((
+            Occur::Should,
+            self.parsed_query(
+                &[
+                    self.fields.symbol_path,
+                    self.fields.title,
+                    self.fields.section_text,
+                    self.fields.package_name,
+                    self.fields.signature,
+                    self.fields.related_text,
+                    self.fields.body,
+                ],
+                text,
+            ),
+        ));
         clauses.extend(self.identifier_clauses(text));
         if let Some(filter) = self.filter_clause(query) {
             clauses.push((Occur::Must, filter));
@@ -423,7 +448,9 @@ impl TantivyRetriever {
 
 impl KnowledgeRetriever for TantivyRetriever {
     fn search(&self, query: &SearchQuery) -> Result<Vec<SearchHit>> {
-        let span = info_span!("search", query = %query.text);
+        // Query text is user input and lives at debug level only; counts and
+        // timings are safe at info (level policy, docs/observability.md).
+        let span = debug_span!("search", query = %query.text);
         let _enter = span.enter();
         let start = std::time::Instant::now();
 
@@ -454,20 +481,17 @@ impl KnowledgeRetriever for TantivyRetriever {
     }
 
     fn get(&self, id: &DocumentId) -> Result<KnowledgeDocument> {
-        let searcher = self.searcher();
-        let query = TermQuery::new(
-            Term::from_field_text(self.fields.id, id.as_str()),
-            IndexRecordOption::Basic,
+        // Document ids are content hashes, never user text: safe at debug.
+        let span = debug_span!("doc_get", id = %id.as_str());
+        let _enter = span.enter();
+        let start = std::time::Instant::now();
+
+        let document = self.document_by_id(id)?;
+        info!(
+            elapsed_ms = start.elapsed().as_millis() as u64,
+            "document retrieved"
         );
-        let top = searcher
-            .search(&query, &TopDocs::with_limit(1).order_by_score())
-            .map_err(KnowledgeError::engine)?;
-        let (_, addr) = top
-            .first()
-            .ok_or_else(|| KnowledgeError::DocumentNotFound(id.clone()))?;
-        let doc: TantivyDocument = searcher.doc(*addr).map_err(KnowledgeError::engine)?;
-        from_tantivy_doc(&self.fields, &doc)
-            .ok_or_else(|| KnowledgeError::DocumentNotFound(id.clone()))
+        Ok(document)
     }
 
     #[expect(
@@ -475,8 +499,11 @@ impl KnowledgeRetriever for TantivyRetriever {
         reason = "symbol lookup keeps its scoring and result projection together"
     )]
     fn symbol_lookup(&self, query: &SymbolQuery) -> Result<Vec<SymbolInfo>> {
-        let span = info_span!("symbol_lookup", symbol = %query.symbol);
+        // The symbol is user input and lives at debug level only; counts and
+        // timings are safe at info.
+        let span = debug_span!("symbol_lookup", symbol = %query.symbol);
         let _enter = span.enter();
+        let start = std::time::Instant::now();
 
         let symbol = query.symbol.trim().to_lowercase();
         if symbol.is_empty() {
@@ -638,6 +665,11 @@ impl KnowledgeRetriever for TantivyRetriever {
                 related_symbols: related,
             });
         }
+        info!(
+            hits = out.len(),
+            elapsed_ms = start.elapsed().as_millis() as u64,
+            "symbol lookup done"
+        );
         Ok(out)
     }
 }
@@ -745,7 +777,10 @@ mod tests {
         // can never build anything but term queries.
         assert_eq!(syntax_free_text("-G{a["), "G a");
         assert_eq!(syntax_free_text("title:[a TO z]"), "title a TO z");
-        assert_eq!(syntax_free_text("+must -mustnot ^boost"), "must mustnot boost");
+        assert_eq!(
+            syntax_free_text("+must -mustnot ^boost"),
+            "must mustnot boost"
+        );
         assert_eq!(syntax_free_text("Writer::flush"), "Writer flush");
         assert_eq!(syntax_free_text(r#""a phrase"~2"#), "a phrase 2");
         assert_eq!(syntax_free_text("*"), "");
