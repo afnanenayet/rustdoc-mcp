@@ -30,12 +30,12 @@ use std::time::Duration;
 
 use criterion::{BatchSize, Criterion, Throughput};
 use knowledge_core::KnowledgeRetriever;
-use knowledge_index::corpus::{build_corpus, CorpusOptions, RustdocScope};
+use knowledge_index::corpus::{CorpusOptions, RustdocScope, build_corpus};
 use knowledge_index::markdown;
 use knowledge_index::rustdoc::normalize;
-use knowledge_index::tantivy_index::{build_index, TantivyRetriever};
+use knowledge_index::tantivy_index::{TantivyRetriever, build_index};
 
-use support::{build_state, BenchState};
+use support::{BenchState, build_state};
 
 fn main() {
     let mut criterion = Criterion::default().configure_from_args();
@@ -104,8 +104,7 @@ fn corpus_benches(c: &mut Criterion, state: &BenchState) {
             ),
             |b| {
                 b.iter(|| {
-                    let docs =
-                        markdown::chunk_markdown(&input.identity, &input.file, &input.text);
+                    let docs = markdown::chunk_markdown(&input.identity, &input.file, &input.text);
                     black_box(docs.len())
                 })
             },

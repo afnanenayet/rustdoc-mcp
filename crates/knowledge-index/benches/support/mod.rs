@@ -30,14 +30,12 @@ use knowledge_core::{
     DocumentId, KnowledgeDocument, KnowledgeRetriever, PackageIdentity, SearchQuery, SymbolQuery,
 };
 use knowledge_index::CargoUniverse;
-use knowledge_index::corpus::{build_corpus, CorpusOptions, RustdocScope};
+use knowledge_index::corpus::{CorpusOptions, RustdocScope, build_corpus};
 use knowledge_index::eval::parse_cases;
 use knowledge_index::markdown::{self, MarkdownFile};
-use knowledge_index::rustdoc::{
-    normalize, PrebuiltRustdocProvider, RustdocProvider,
-};
+use knowledge_index::rustdoc::{PrebuiltRustdocProvider, RustdocProvider, normalize};
 use knowledge_index::store::IndexMeta;
-use knowledge_index::tantivy_index::{build_index, TantivyRetriever};
+use knowledge_index::tantivy_index::{TantivyRetriever, build_index};
 use tempfile::TempDir;
 
 /// The committed fixture workspace (its own cargo workspace, excluded from
@@ -130,7 +128,8 @@ impl BenchState {
 /// fixture inputs drift, so a broken bench is preferable to a silent miss.
 pub fn build_state() -> BenchState {
     let manifest = fixture_dir().join("Cargo.toml");
-    let universe = CargoUniverse::load(Some(&manifest)).expect("cargo metadata on the fixture workspace");
+    let universe =
+        CargoUniverse::load(Some(&manifest)).expect("cargo metadata on the fixture workspace");
     let provider = PrebuiltRustdocProvider {
         dir: fixture_dir().join("prebuilt-rustdoc"),
     };
@@ -165,8 +164,7 @@ pub fn build_state() -> BenchState {
         let identity = universe.identity(pkg);
         let readme = pkg.readme.as_ref().map(|p| p.as_std_path());
         for file in markdown::discover(&identity, readme) {
-            let text =
-                std::fs::read_to_string(&file.abs_path).expect("markdown file is readable");
+            let text = std::fs::read_to_string(&file.abs_path).expect("markdown file is readable");
             let chunks = markdown::chunk_markdown(&identity, &file, &text).len();
             markdown_inputs.push(MarkdownInput {
                 identity: identity.clone(),
@@ -207,10 +205,8 @@ pub fn build_state() -> BenchState {
 
     // --- the persistent index the retrieval benches read ---
     let index_dir = tempfile::tempdir().expect("scratch index tempdir");
-    build_index(index_dir.path(), &documents, &meta)
-        .expect("persistent index builds");
-    let retriever = TantivyRetriever::open(index_dir.path())
-        .expect("persistent index opens");
+    build_index(index_dir.path(), &documents, &meta).expect("persistent index builds");
+    let retriever = TantivyRetriever::open(index_dir.path()).expect("persistent index opens");
 
     // --- the 21 eval queries ---
     let raw = std::fs::read_to_string(eval_set_path()).expect("eval set is present");
@@ -313,11 +309,7 @@ fn expect_symbol_hits(retriever: &TantivyRetriever, query: &SymbolQuery) -> usiz
 /// Runs one package-filtered search at setup and fails loudly when it
 /// returns no hit from the filtered package, so the filtered bench
 /// never silently measures an empty result set.
-fn expect_package_hits(
-    retriever: &TantivyRetriever,
-    query: &SearchQuery,
-    package: &str,
-) -> usize {
+fn expect_package_hits(retriever: &TantivyRetriever, query: &SearchQuery, package: &str) -> usize {
     let hits = retriever
         .search(query)
         .expect("filtered search runs against the persistent fixture index");

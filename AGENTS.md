@@ -44,6 +44,50 @@ cargo run -p knowledge-cli -- eval evals/queries.toml              # retrieval e
   `RUST_LOG`) env vars are figue's environment layer: each sits below its
   CLI flag, which always wins.
 
+## Property-based and adversarial-input testing
+
+`cargo test` runs two hostile-input suites alongside the example-based tests
+(issue #5). The MCP surface accepts arbitrary strings from LLM clients; these
+suites enforce that no such string can panic the server, hang it, corrupt
+state, or produce unbounded output.
+
+- **Adversarial corpora** — `crates/knowledge-index/tests/adversarial.rs` and
+  `crates/knowledge-mcp/tests/adversarial.rs`: a committed, named list of
+  hostile payloads (NUL bytes, control characters, unicode lookalikes, path
+  traversal, query-syntax metacharacters, markdown fence bombs, ~1MB
+  strings) run through every entry point an LLM client can reach —
+  deterministically, no randomness, every run. **To add a payload**, append a
+  `("name", string)` entry to `payloads()`; every test picks it up
+  automatically.
+- **Property suites** — `crates/knowledge-index/tests/properties.rs` and
+  `crates/knowledge-mcp/tests/properties.rs`: proptest properties over
+  arbitrary query text, symbols, ids, package/kind filters (including the
+  no-filter-bypass invariant), limits, and markdown chunking. They prove
+  invariants, **not retrieval quality** — `evals/queries.toml` stays the
+  relevance gate; green property tests are not evidence of good ranking.
+
+Reproducing and debugging a failure:
+
+- When a property fails, proptest appends the failing case to
+  `<test-file>.proptest-regressions` beside the test file — in this repo,
+  `crates/knowledge-index/tests/properties.proptest-regressions`.
+  (proptest's default lookup walks up from the test file to a directory
+  holding `lib.rs`/`main.rs`; from `tests/` it finds none, so it names
+  the file after the test file itself.) **Commit those files, at that exact
+  path** (never gitignore or move them): plain `cargo test` replays every
+  saved case before generating new random ones, so past failures keep
+  replaying until they pass again.
+- `PROPTEST_CASES=<n> cargo test --test properties` runs a heavier sweep
+  (proptest reads this variable natively). The committed default is 32 cases
+  per property (16 through the MCP transport) to keep the suite fast.
+- `PROPTEST_RNG_SEED=<u64> cargo test --test properties` pins one exact
+  random sequence (a decimal u64, e.g. `PROPTEST_RNG_SEED=42`) for
+  deterministic debugging. A real failure reproduces through the committed
+  regressions file above; proptest never needs a seed copied out of test
+  output.
+- Re-run a single property with
+  `cargo test -p knowledge-index --test properties <name>`.
+
 ## Architecture
 
 Four crates, one data flow. `knowledge-core` is the only crate the others all

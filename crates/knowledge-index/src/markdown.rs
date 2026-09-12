@@ -269,10 +269,36 @@ impl Chunker<'_> {
     }
 
     /// Appends text, splitting the chunk at this boundary if it would
-    /// overflow `MAX_CHUNK_CHARS`.
+    /// overflow MAX_CHUNK_CHARS.
+    ///
+    /// A single event can itself be larger than MAX_CHUNK_CHARS (a
+    /// pathological one-line paragraph, a huge inline-HTML block), and such
+    /// an event can never fit whole: it is split at character boundaries so
+    /// every chunk stays bounded and multibyte characters are never cut.
     fn append_with_split(&mut self, text: &str) {
-        self.split_if_full(text.len());
-        self.buf.push_str(text);
+        if text.len() <= MAX_CHUNK_CHARS {
+            // Fast path — every realistic event: split between events only.
+            self.split_if_full(text.len());
+            self.buf.push_str(text);
+            return;
+        }
+        // Pathological event: flush what is pending, then emit the event
+        // in bounded pieces.
+        if !self.buf.is_empty() {
+            self.flush();
+            self.chunk_ordinal += 1;
+        }
+        let mut piece = String::with_capacity(MAX_CHUNK_CHARS);
+        for ch in text.chars() {
+            if piece.len() + ch.len_utf8() > MAX_CHUNK_CHARS {
+                self.buf.push_str(&piece);
+                self.flush();
+                self.chunk_ordinal += 1;
+                piece.clear();
+            }
+            piece.push(ch);
+        }
+        self.buf.push_str(&piece);
     }
 
     fn split_if_full(&mut self, incoming: usize) {
@@ -401,6 +427,51 @@ mod tests {
         let docs = chunks("# A\ntext a\n\n# B\ntext b\n");
         assert_eq!(docs.len(), 2);
         assert_eq!(docs[1].section_path, vec!["B"]);
+    }
+
+    #[test]
+    fn oversized_single_event_is_split_at_char_boundaries() {
+        // One paragraph, one Text event, 6000 bytes of multibyte text:
+        // larger than MAX_CHUNK_CHARS and impossible to cut on a block
+        // boundary.
+        let text = format!("# Big\n\n{}\n", "\u{e4}".repeat(3_000));
+        let docs = chunks(&text);
+        assert!(
+            docs.len() >= 2,
+            "expected a split, got {} chunks",
+            docs.len()
+        );
+        for doc in &docs {
+            assert!(
+                doc.text.len() <= MAX_CHUNK_CHARS,
+                "chunk is {} bytes",
+                doc.text.len()
+            );
+            assert_eq!(doc.section_path, vec!["Big"]);
+            assert!(
+                doc.text.chars().all(|c| c == '\u{e4}'),
+                "split mid-character"
+            );
+        }
+        // Splitting is deterministic: same input, same ids.
+        let again = chunks(&text);
+        assert_eq!(docs, again);
+    }
+
+    #[test]
+    fn oversized_ascii_event_is_split() {
+        let text = format!("# Big\n\n{}\n", "a".repeat(9_000));
+        let docs = chunks(&text);
+        assert!(docs.len() >= 2, "got {} chunks", docs.len());
+        for doc in &docs {
+            assert!(
+                doc.text.len() <= MAX_CHUNK_CHARS + 3,
+                "chunk is {} bytes",
+                doc.text.len()
+            );
+        }
+        let ids: HashSet<&_> = docs.iter().map(|d| &d.id).collect();
+        assert_eq!(ids.len(), docs.len(), "split chunks must have unique ids");
     }
 
     #[test]
